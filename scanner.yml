@@ -1,0 +1,104 @@
+name: Scheduled Stock Scanner
+
+on:
+  # Manual 'Run workflow' = scan every enabled job now. Scheduled runs follow the Schedule sheet (IST).
+  # The Schedule sheet decides WHICH job runs and WHEN (IST). This cron only polls twice an hour;
+  # Scanner.py catches up any job whose slot has passed, so late/skipped GitHub runs are harmless.
+  schedule:
+    - cron: "10,40 * * * *"
+  workflow_dispatch:
+    inputs:
+      job_name:
+        description: "Optional: run only the job with this exact name (e.g. Weekly scan)"
+        required: false
+        type: string
+        default: ""
+      live_dashboard:
+        description: "Stream real-time progress to the Live Dashboard (see the 'Live Dashboard' workflow)"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: stock-scanner
+  cancel-in-progress: false
+
+jobs:
+  run-scanner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install TA-Lib (binary wheel, else build from source)
+        run: |
+          if pip install TA-Lib && python -c "import talib"; then
+            echo "TA-Lib installed from wheel"
+          else
+            sudo apt-get update && sudo apt-get install -y build-essential wget
+            wget -q https://github.com/ta-lib/ta-lib/releases/download/v0.6.4/ta-lib-0.6.4-src.tar.gz
+            tar -xzf ta-lib-0.6.4-src.tar.gz
+            (cd ta-lib-0.6.4 && ./configure --prefix=/usr && make -j2 && sudo make install)
+            sudo ldconfig
+            pip install --no-cache-dir TA-Lib
+          fi
+          python -c "import talib; print('TA-Lib', talib.__version__)"
+
+      - name: Run stock scanner
+        env:
+          MATRIX_HOMESERVER: ${{ secrets.MATRIX_HOMESERVER }}
+          MATRIX_ACCESS_TOKEN: ${{ secrets.MATRIX_ACCESS_TOKEN }}
+          MATRIX_ROOM_ID: ${{ secrets.MATRIX_ROOM_ID }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          # ---- Live Dashboard feed (progress is published to the 'live-status' branch) ----
+          # Manual runs follow the checkbox above; scheduled runs follow the repository variable LIVE_DASHBOARD (1 = on).
+          LIVE_DASHBOARD: ${{ github.event_name == 'workflow_dispatch' && inputs.live_dashboard && '1' || (vars.LIVE_DASHBOARD || '0') }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ALL_ENABLED: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
+          JOB_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.job_name || '' }}
+          SCANNER_TIMEZONE: Asia/Kolkata
+          PYTHONWARNINGS: ignore
+        run: python -u Scanner.py
+
+      - name: Commit updated workbook and reports
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "MASTER DASHBOARD.xlsx"
+          git add -A -- reports 2>/dev/null || true
+          if ! git diff --cached --quiet; then
+            git commit -m "Update scanner dashboard, logs and reports [skip ci]"
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" || true
+            git push
+          fi
+
+      - name: Upload generated reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Stock-Scanner-Reports
+          path: reports/Scan_Results_*.xlsx
+          if-no-files-found: ignore
+          retention-days: 14

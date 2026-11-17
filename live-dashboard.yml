@@ -1,0 +1,96 @@
+name: Live Dashboard
+
+# Starts the Bloomberg-style dashboard on a GitHub runner and gives you a public https link (Cloudflare quick
+# tunnel). It follows the 'live-status' branch that the Scheduled Stock Scanner writes while it runs, so the
+# progress bars move in real time. The link stays up for the number of minutes you choose, then the job ends.
+#
+# NOTE: in a PUBLIC repo the run log (and therefore the link + key) is public; in a private repo only collaborators
+# can read it. The runner minutes used while the dashboard is up count against your Actions quota in private repos.
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "How long to keep the dashboard online (minutes, 5-340)"
+        required: false
+        type: string
+        default: "60"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-dashboard
+  cancel-in-progress: true        # starting it again replaces the previous session
+
+jobs:
+  serve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies (only used for the workbook fallback)
+        run: pip install openpyxl
+
+      - name: Start dashboard server
+        run: |
+          echo "DASH_KEY=$(openssl rand -hex 8)" >> "$GITHUB_ENV"
+          nohup python -u dashboard_server.py --host 127.0.0.1 --port 8080 --source github \
+            --workbook "MASTER DASHBOARD.xlsx" > server.log 2>&1 &
+          for i in $(seq 1 20); do
+            curl -fs http://127.0.0.1:8080/healthz >/dev/null && break
+            sleep 1
+          done
+          curl -fs http://127.0.0.1:8080/healthz || { cat server.log; exit 1; }
+
+      - name: Open public tunnel
+        run: |
+          curl -fsSL -o cloudflared \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared
+          nohup ./cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8080 > tunnel.log 2>&1 &
+          url=""
+          for i in $(seq 1 45); do
+            url=$(grep -o 'https://[-a-z0-9]*\.trycloudflare\.com' tunnel.log | head -1 || true)
+            [ -n "$url" ] && break
+            sleep 2
+          done
+          if [ -z "$url" ]; then echo "Tunnel did not start:"; cat tunnel.log; exit 1; fi
+          echo "DASH_URL=${url}/?key=${DASH_KEY}" >> "$GITHUB_ENV"
+
+      - name: Show the link
+        run: |
+          echo "::notice title=Live Dashboard::${DASH_URL}"
+          {
+            echo "### 📈 Live Dashboard is online"
+            echo ""
+            echo "**[Open the dashboard](${DASH_URL})**"
+            echo ""
+            echo '```'
+            echo "${DASH_URL}"
+            echo '```'
+            echo "Stays up for ${{ inputs.minutes }} minutes. Start the *Scheduled Stock Scanner* with **live dashboard** ticked to see progress move."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Dashboard: ${DASH_URL}"
+
+      - name: Keep dashboard online
+        env:
+          MINUTES: ${{ inputs.minutes }}
+        run: |
+          case "$MINUTES" in ''|*[!0-9]*) MINUTES=60 ;; esac
+          [ "$MINUTES" -lt 5 ] && MINUTES=5
+          [ "$MINUTES" -gt 340 ] && MINUTES=340
+          end=$(( $(date +%s) + MINUTES * 60 ))
+          while [ "$(date +%s)" -lt "$end" ]; do
+            curl -fs http://127.0.0.1:8080/healthz >/dev/null || { echo "server stopped"; tail -n 30 server.log; exit 1; }
+            pgrep -x cloudflared >/dev/null || { echo "tunnel stopped"; tail -n 30 tunnel.log; exit 1; }
+            sleep 30
+          done
+          echo "Time is up - shutting the dashboard down."

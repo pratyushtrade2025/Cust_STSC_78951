@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scanner Terminal</title>
+<style>
+  :root{
+    --bg:#000; --panel:#080808; --head:#1a1204; --line:#2b2110; --line2:#4a3610;
+    --amber:#ffb000; --amber-d:#a87400; --dim:#8c7a52; --txt:#e8dcc0;
+    --green:#19d36b; --red:#ff4d4d; --yellow:#ffd33d; --blue:#4db8ff; --grey:#6d665a;
+    --mono:"Cascadia Mono","SF Mono","JetBrains Mono",Consolas,"Liberation Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);font:12px/1.35 var(--mono)}
+  body{min-height:100vh;display:flex;flex-direction:column}
+  ::selection{background:var(--amber);color:#000}
+  ::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:var(--line2)}::-webkit-scrollbar-track{background:#000}
+
+  /* ---------- top bar ---------- */
+  .top{display:flex;align-items:stretch;gap:0;border-bottom:2px solid var(--amber);background:#000;flex-wrap:wrap}
+  .brand{background:var(--amber);color:#000;font-weight:700;padding:5px 12px;letter-spacing:.08em;white-space:nowrap}
+  .sub{padding:5px 12px;color:var(--amber);letter-spacing:.06em;white-space:nowrap}
+  .sub b{color:#000;background:var(--amber);padding:0 5px;margin-left:6px}
+  .keys{display:flex;margin-left:8px}
+  .keys button{all:unset;cursor:pointer;padding:5px 10px;color:var(--dim);border-left:1px solid var(--line)}
+  .keys button b{color:var(--amber);margin-right:4px}
+  .keys button.on,.keys button:hover{color:#000;background:var(--amber)}
+  .keys button.on b,.keys button:hover b{color:#000}
+  .spacer{flex:1}
+  .conn{display:flex;align-items:center;gap:7px;padding:5px 12px;border-left:1px solid var(--line);white-space:nowrap}
+  .led{width:9px;height:9px;border-radius:50%;background:var(--grey)}
+  .led.live{background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 1.6s infinite}
+  .led.idle{background:var(--blue)} .led.stale{background:var(--yellow)} .led.off{background:var(--red)}
+  @keyframes pulse{50%{opacity:.35}}
+  .clock{padding:5px 12px;border-left:1px solid var(--line);color:var(--amber);font-weight:700;white-space:nowrap}
+  .gear{all:unset;cursor:pointer;padding:5px 10px;border-left:1px solid var(--line);color:var(--dim)}
+  .gear:hover{color:var(--amber)}
+
+  /* ---------- KPI strip ---------- */
+  .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:1px;background:var(--line);border-bottom:1px solid var(--line)}
+  .kpi{background:var(--panel);padding:7px 12px}
+  .kpi small{display:block;color:var(--dim);letter-spacing:.1em;font-size:10px}
+  .kpi span{font-size:22px;font-weight:700;line-height:1.1;color:var(--amber)}
+  .kpi.run span{color:var(--yellow)} .kpi.ok span{color:var(--green)} .kpi.sched span{color:var(--blue)} .kpi.bad span{color:var(--red)}
+  .kpi.zero span{opacity:.45}
+
+  main{padding:6px;display:flex;flex-direction:column;gap:6px;flex:1}
+  .panel{border:1px solid var(--line);background:var(--panel);min-width:0;display:flex;flex-direction:column}
+  .ph{background:var(--head);color:var(--amber);padding:3px 8px;border-bottom:1px solid var(--line);
+      letter-spacing:.1em;font-size:11px;display:flex;justify-content:space-between;gap:10px}
+  .ph em{color:var(--dim);font-style:normal;letter-spacing:0}
+  .scroll{overflow:auto}
+
+  /* ---------- tables ---------- */
+  table{border-collapse:collapse;width:100%}
+  th{position:sticky;top:0;background:#120d03;color:var(--amber-d);text-align:left;font-weight:400;font-size:10px;
+     letter-spacing:.1em;padding:4px 8px;border-bottom:1px solid var(--line2);white-space:nowrap}
+  td{padding:5px 8px;border-bottom:1px solid #15110a;white-space:nowrap;vertical-align:middle}
+  td.num,th.num{text-align:right}
+  tr.row.run{background:linear-gradient(90deg,rgba(255,176,0,.10),rgba(255,176,0,0) 70%);box-shadow:inset 3px 0 0 var(--amber)}
+  tr.row.off td{opacity:.5}
+  td.name{color:var(--amber);font-weight:700}
+  td.det{max-width:380px;overflow:hidden;text-overflow:ellipsis;color:var(--dim)}
+  td.sub2 div{color:var(--dim);font-size:10px}
+
+  .pill{display:inline-block;min-width:104px;padding:1px 8px;border:1px solid currentColor;font-size:11px;letter-spacing:.04em}
+  .pill.run{color:var(--yellow)} .pill.ok{color:var(--green)} .pill.bad{color:var(--red)}
+  .pill.warn{color:#ff9d2e} .pill.sched{color:var(--blue)} .pill.off{color:var(--grey)}
+  .pill.run::before{content:"▶ "} .pill.ok::before{content:"✔ "} .pill.bad::before{content:"✖ "}
+  .pill.warn::before{content:"! "} .pill.sched::before{content:"◷ "} .pill.off::before{content:"– "}
+
+  .pg{display:flex;align-items:center;gap:8px;min-width:230px}
+  .bar{position:relative;flex:1;height:13px;background:#120d03;border:1px solid var(--line2);overflow:hidden}
+  .bar i{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--amber-d);transition:width .5s linear}
+  .bar::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(90deg,transparent 0 7px,#000 7px 9px)}
+  .run .bar i{background:linear-gradient(90deg,var(--amber-d),var(--amber));}
+  .run .bar::before{content:"";position:absolute;top:0;bottom:0;width:40px;left:-40px;z-index:1;
+     background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);animation:sweep 1.6s linear infinite}
+  @keyframes sweep{to{left:100%}}
+  .ok .bar i{background:var(--green)} .bad .bar i{background:var(--red)} .warn .bar i{background:#ff9d2e}
+  .pct{width:44px;text-align:right;font-weight:700;color:var(--amber)}
+  .phase{color:var(--dim);font-size:10px;margin-top:2px;max-width:320px;overflow:hidden;text-overflow:ellipsis}
+  .phase b{color:var(--yellow);font-weight:400}
+
+  /* ---------- lower grid ---------- */
+  .grid{display:grid;grid-template-columns:1.1fr 1.2fr 1.5fr;gap:6px;flex:1;min-height:260px}
+  .list{height:100%;max-height:340px}
+  .match{display:grid;grid-template-columns:62px 1fr 78px 60px;gap:8px;padding:3px 8px;border-bottom:1px solid #15110a}
+  .match b{color:var(--amber)} .match .lo{color:var(--green)} .match .hi{color:var(--red)}
+  .match.fresh{animation:flash 2.2s ease-out}
+  @keyframes flash{from{background:rgba(255,176,0,.35)}to{background:transparent}}
+  .ev{display:grid;grid-template-columns:62px 1fr;gap:8px;padding:3px 8px;border-bottom:1px solid #15110a}
+  .ev .t,.match .t{color:var(--dim)} .ev.warn .m{color:#ff9d2e} .ev.error .m{color:var(--red)} .ev.ok .m{color:var(--green)}
+  .empty{padding:14px 10px;color:var(--dim)}
+  .kv{display:grid;grid-template-columns:minmax(150px,1fr) 1fr;gap:2px 12px;padding:6px 10px}
+  .kv span:nth-child(odd){color:var(--dim)} .kv span:nth-child(even){color:var(--amber)}
+
+  footer{display:flex;gap:18px;flex-wrap:wrap;padding:4px 10px;border-top:1px solid var(--line);color:var(--dim);background:#050403;font-size:11px}
+  footer b{color:var(--amber);font-weight:400}
+  .banner{display:none;margin:6px 6px 0;padding:6px 10px;border:1px solid var(--yellow);color:var(--yellow);background:#1a1500}
+  .banner.show{display:block} .banner.err{border-color:var(--red);color:var(--red);background:#1a0606}
+
+  dialog{background:#0b0904;color:var(--txt);border:1px solid var(--amber);padding:0;font:12px var(--mono);max-width:520px;width:92vw}
+  dialog::backdrop{background:rgba(0,0,0,.8)}
+  dialog .ph{margin:0} dialog form{padding:12px;display:grid;gap:9px}
+  dialog label{display:grid;gap:3px;color:var(--dim)}
+  dialog input{background:#000;border:1px solid var(--line2);color:var(--amber);padding:6px;font:inherit}
+  dialog p{margin:0;color:var(--dim)} dialog .btns{display:flex;gap:8px;justify-content:flex-end}
+  dialog button{all:unset;cursor:pointer;padding:4px 14px;border:1px solid var(--amber);color:var(--amber)}
+  dialog button.primary{background:var(--amber);color:#000}
+
+  @media (max-width:1150px){.grid{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(3,1fr)}.list{max-height:240px}}
+  @media (max-width:640px){.sub{display:none}.kpis{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="brand">SCANNER</div>
+  <div class="sub" id="reportName">MASTER DASHBOARD <b>&lt;GO&gt;</b></div>
+  <div class="keys">
+    <button data-tab="log" class="on"><b>1</b>RUN LOG</button>
+    <button data-tab="config"><b>2</b>CONFIG</button>
+  </div>
+  <div class="spacer"></div>
+  <div class="conn"><span class="led" id="led"></span><span id="connText">CONNECTING</span></div>
+  <div class="clock" id="clock">--:--:-- IST</div>
+  <button class="gear" id="gear" title="Connection settings">⚙</button>
+</div>
+
+<div class="banner" id="banner"></div>
+
+<div class="kpis" id="kpis"></div>
+
+<main>
+  <section class="panel">
+    <div class="ph"><span>SCHEDULED JOBS · REAL-TIME PROGRESS</span><em id="jobsMeta"></em></div>
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th>JOB</th><th>TF</th><th>STATUS</th><th>PROGRESS</th>
+          <th class="num">MATCHED</th><th class="num">FAILED</th><th class="num">SPEED / ETA</th>
+          <th>NEXT RUN</th><th>LAST COMPLETED</th><th>MATRIX</th><th>DETAILS</th>
+        </tr></thead>
+        <tbody id="jobs"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="grid">
+    <section class="panel">
+      <div class="ph"><span>LIVE MATCHES</span><em>latest RSI-filter hits</em></div>
+      <div class="scroll list" id="matches"></div>
+    </section>
+    <section class="panel">
+      <div class="ph"><span>ACTIVITY</span><em>scanner events</em></div>
+      <div class="scroll list" id="events"></div>
+    </section>
+    <section class="panel">
+      <div class="ph"><span id="tabTitle">RUN LOG</span><em id="tabMeta"></em></div>
+      <div class="scroll list" id="tabBody"></div>
+    </section>
+  </div>
+</main>
+
+<footer id="foot"></footer>
+
+<dialog id="dlg">
+  <div class="ph"><span>CONNECTION · GITHUB DIRECT</span><em></em></div>
+  <form method="dialog" id="form">
+    <p>Used when this page is NOT served by dashboard_server.py (e.g. opened from a file, or hosted statically).
+       The page reads <b>live_status.json</b> from the repo's <b>live-status</b> branch. For a private repo create a
+       fine-grained token with <b>Contents: read-only</b> on that repo. It is kept only in this browser.</p>
+    <label>Repository (owner/name)<input id="fRepo" placeholder="your-user/stock-scanner" autocomplete="off"></label>
+    <label>Branch<input id="fBranch" value="live-status" autocomplete="off"></label>
+    <label>Token (optional for public repos)<input id="fToken" type="password" autocomplete="off"></label>
+    <div class="btns"><button type="button" id="fCancel">Cancel</button><button class="primary" value="ok">Connect</button></div>
+  </form>
+</dialog>
+
+<script>
+"use strict";
+const IST = "Asia/Kolkata";
+const $ = (s) => document.querySelector(s);
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const params = new URLSearchParams(location.search);
+const KEY = params.get("key") || "";
+const store = {
+  get(k){ try { return localStorage.getItem(k); } catch { return null; } },
+  set(k,v){ try { localStorage.setItem(k,v); } catch {} },
+};
+
+let S = null;            // latest state
+let serverSkew = 0;      // serverTime - clientTime (ms)
+let mode = null;         // "server" | "github"
+let transport = "";      // text for the footer
+let connState = "off";   // live | idle | stale | off
+let tab = "log";
+let seenMatches = new Set();
+let ghTimer = null, es = null, pollTimer = null;
+
+/* ---------- formatting ---------- */
+const dtf = (opts) => new Intl.DateTimeFormat("en-GB", {timeZone: IST, hour12: false, ...opts});
+const fT = dtf({hour:"2-digit",minute:"2-digit",second:"2-digit"});
+const fD = dtf({day:"2-digit",month:"short"});
+const fDT = dtf({day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"});
+const time = (iso) => iso ? fT.format(new Date(iso)) : "";
+const dt = (iso) => iso ? fDT.format(new Date(iso)).replace(",", "") : "—";
+const nowMs = () => Date.now() + serverSkew;
+function dur(sec){
+  if (sec == null || !isFinite(sec)) return "—";
+  sec = Math.max(0, Math.round(sec));
+  const h = Math.floor(sec/3600), m = Math.floor(sec%3600/60), s = sec%60;
+  return h ? `${h}h ${String(m).padStart(2,"0")}m` : m ? `${m}m ${String(s).padStart(2,"0")}s` : `${s}s`;
+}
+const n0 = (v) => (v == null || v === "") ? "—" : Number(v).toLocaleString("en-IN");
+
+function statusInfo(s){
+  const l = String(s||"").toLowerCase();
+  if (l.includes("in progress")) return "run";
+  if (l.includes("completed"))   return "ok";
+  if (l.includes("failed"))      return "bad";
+  if (l.includes("interrupted")) return "warn";
+  if (l.includes("scheduled"))   return "sched";
+  return "off";
+}
+const cleanStatus = (s) => String(s||"—").replace(/^[^A-Za-z0-9]+/u, "") || "—";
+
+/* ---------- render ---------- */
+function render(){
+  if (!S) return;
+  const sm = S.summary || {};
+  $("#reportName").innerHTML = `${esc(S.report_name || "MASTER DASHBOARD")} <b>&lt;GO&gt;</b>`;
+  const k = [["ENABLED JOBS", sm.enabled, ""], ["IN PROGRESS", sm.in_progress, "run"], ["COMPLETED", sm.completed, "ok"],
+             ["SCHEDULED", sm.scheduled, "sched"], ["FAILED / CUT OFF", sm.failed, "bad"]];
+  $("#kpis").innerHTML = k.map(([l,v,c]) => `<div class="kpi ${c} ${v ? "" : "zero"}"><small>${l}</small><span>${n0(v ?? 0)}</span></div>`).join("");
+
+  const jobs = S.jobs || [];
+  $("#jobsMeta").textContent = `${jobs.length} jobs · watchlist ${n0(S.watchlist_size)} symbols`;
+  $("#jobs").innerHTML = jobs.length ? jobs.map(jobRow).join("") :
+    `<tr><td colspan="11" class="empty">${esc(S.error || "No jobs found in the Schedule sheet.")}</td></tr>`;
+
+  renderMatches(); renderEvents(); renderTab(); renderFoot(); renderBanner();
+}
+
+function jobRow(j){
+  const c = statusInfo(j.status), running = c === "run";
+  const prog = j.progress == null ? null : Math.max(0, Math.min(1, j.progress));
+  const pct = prog == null ? "" : Math.round(prog*100) + "%";
+  const counts = running && j.total ? `${n0(j.done)}/${n0(j.total)}` : "";
+  const phase = running ? `<div class="phase"><b>${esc(j.phase || "")}</b>${j.symbol && j.phase === "Scanning" ? " · " + esc(j.symbol) : ""}</div>` : "";
+  const speed = running && j.rate ? `${j.rate.toFixed(1)}/s<div style="color:var(--dim);font-size:10px">ETA ${dur(j.eta_sec)}</div>` : "—";
+  return `<tr class="row ${c} ${j.enabled ? "" : "off"}">
+    <td class="name">${esc(j.name)}</td>
+    <td>${esc(j.timeframe)}</td>
+    <td><span class="pill ${c}">${esc(cleanStatus(j.status))}</span></td>
+    <td class="${c}"><div class="pg"><div class="bar"><i style="width:${prog == null ? 0 : (prog*100).toFixed(1)}%"></i></div>
+        <span class="pct">${pct}</span></div>
+        ${counts ? `<div class="phase">${counts}</div>` : ""}${phase}</td>
+    <td class="num">${n0(j.matched)}</td>
+    <td class="num" style="${j.failed ? "color:var(--red)" : ""}">${n0(j.failed)}</td>
+    <td class="num">${speed}</td>
+    <td>${dt(j.next_run)}</td>
+    <td>${dt(j.last_completed)}</td>
+    <td>${esc(j.matrix_status || "—")}</td>
+    <td class="det" title="${esc(j.details)}">${esc(j.details || "")}</td></tr>`;
+}
+
+function renderMatches(){
+  const m = (S.matches || []).slice(0, 30);
+  if (!m.length){ $("#matches").innerHTML = `<div class="empty">No matches yet${S.run_active ? " — scanning…" : ""}.</div>`; return; }
+  $("#matches").innerHTML = m.map((x) => {
+    const id = x.t + x.symbol; const fresh = !seenMatches.has(id) && seenMatches.size > 0; seenMatches.add(id);
+    const r = x.rsi, cls = r == null ? "" : r <= 40 ? "lo" : r >= 60 ? "hi" : "";
+    return `<div class="match ${fresh ? "fresh" : ""}"><span class="t">${time(x.t)}</span><b>${esc(x.symbol)}</b>` +
+           `<span>${x.ltp == null ? "" : Number(x.ltp).toLocaleString("en-IN",{minimumFractionDigits:2})}</span>` +
+           `<span class="${cls}">RSI ${r == null ? "—" : Number(r).toFixed(1)}</span></div>`;
+  }).join("");
+}
+
+function renderEvents(){
+  const e = (S.events || []).slice(0, 60);
+  $("#events").innerHTML = e.length ? e.map((x) =>
+    `<div class="ev ${esc(x.level)}"><span class="t">${time(x.t)}</span><span class="m">${esc(x.msg)}</span></div>`).join("")
+    : `<div class="empty">No scanner activity in the current feed.</div>`;
+}
+
+function renderTab(){
+  document.querySelectorAll(".keys button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
+  if (tab === "log"){
+    $("#tabTitle").textContent = "RUN LOG";
+    const rows = S.log || [];
+    $("#tabMeta").textContent = `last ${rows.length}`;
+    $("#tabBody").innerHTML = rows.length ? `<table><thead><tr><th>TIME</th><th>JOB</th><th>TF</th><th class="num">SCANNED</th><th class="num">MATCHED</th><th>RESULT</th></tr></thead><tbody>` +
+      rows.map((r) => `<tr><td>${dt(r.time)}</td><td style="color:var(--amber)">${esc(r.job)}</td><td>${esc(r.timeframe)}</td>` +
+        `<td class="num">${n0(r.scanned)}</td><td class="num">${n0(r.matched)}</td>` +
+        `<td class="det" title="${esc(r.result)}">${esc(r.result)}</td></tr>`).join("") + `</tbody></table>`
+      : `<div class="empty">Log is empty.</div>`;
+  } else {
+    $("#tabTitle").textContent = "CONFIG";
+    $("#tabMeta").textContent = "secrets hidden";
+    const cfg = Object.entries(S.config || {});
+    const rng = (S.rsi_ranges || []).map((r) =>
+      `<span>RSI ${esc(r.timeframe)}</span><span>${r.active ? "ACTIVE" : "off"} · ${r.min ?? "—"} – ${r.max ?? "—"}</span>`).join("");
+    $("#tabBody").innerHTML = `<div class="kv">${rng}${cfg.map(([a,b]) => `<span>${esc(a)}</span><span>${esc(b)}</span>`).join("")}</div>`;
+  }
+}
+
+function renderFoot(){
+  const run = S.run || {};
+  $("#foot").innerHTML =
+    `<span>SRC <b>${esc(transport)}${S.source ? " / " + esc(S.source) : ""}</b></span>` +
+    `<span>UPDATED <b>${time(S.updated) || "—"}</b></span><span>AGE <b>${dur(ageSec())}</b></span>` +
+    (run.id ? `<span>RUN <b>#${esc(run.id)}</b> (${esc(run.trigger || "")}${run.host ? ", " + esc(run.host) : ""})</span>` : "") +
+    (S.seq != null ? `<span>SEQ <b>${esc(S.seq)}</b></span>` : "");
+}
+
+function ageSec(){ return S && S.updated ? (nowMs() - Date.parse(S.updated)) / 1000 : null; }
+
+function renderBanner(){
+  const b = $("#banner"); let msg = "", err = false;
+  if (S.error){ msg = "Workbook error: " + S.error; err = true; }
+  else if (S.source_note){ msg = S.source_note; }
+  else if (S.from_workbook && !S.run_active) msg = "No live scan feed — showing the saved MASTER DASHBOARD workbook. Start a scan with LIVE_DASHBOARD=1 for real-time progress.";
+  else if (connState === "stale") msg = "Scan feed has not updated for " + dur(ageSec()) + " — the runner may have stopped or be waiting on slow data.";
+  b.textContent = msg; b.className = "banner" + (msg ? " show" : "") + (err ? " err" : "");
+}
+
+function setConn(){
+  let st = "off", text = "OFFLINE";
+  if (S){
+    const age = ageSec();
+    if (S.run_active){ if (age != null && age > 150){ st = "stale"; text = "STALE"; } else { st = "live"; text = "LIVE · SCAN RUNNING"; } }
+    else { st = "idle"; text = S.from_workbook ? "IDLE · WORKBOOK" : "IDLE"; }
+  }
+  connState = st; $("#led").className = "led " + st; $("#connText").textContent = text;
+}
+
+/* ---------- data sources ---------- */
+function apply(state, serverTime){
+  S = state;
+  const st = serverTime || state.server_time;
+  if (st) serverSkew = Date.parse(st) - Date.now();
+  setConn(); render();
+}
+const apiUrl = (p) => p + (KEY ? "?key=" + encodeURIComponent(KEY) : "");
+
+async function tryServer(){
+  const r = await fetch(apiUrl("/api/state"), {cache: "no-store"});
+  if (r.status === 401){ throw new Error("ACCESS KEY REQUIRED — open the dashboard URL that ends with ?key=…"); }
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  apply(await r.json());
+}
+
+function startSSE(){
+  transport = "server (SSE)";
+  es = new EventSource(apiUrl("/events"));
+  es.addEventListener("state", (e) => apply(JSON.parse(e.data)));
+  es.addEventListener("tick", (e) => { const t = JSON.parse(e.data).server_time; if (t){ serverSkew = Date.parse(t) - Date.now(); if (S){ setConn(); renderFoot(); renderBanner(); } } });
+  es.onerror = () => {
+    $("#led").className = "led off"; $("#connText").textContent = "RECONNECTING";
+    if (es.readyState === EventSource.CLOSED && !pollTimer){            // proxy without SSE -> poll
+      transport = "server (polling)";
+      pollTimer = setInterval(() => tryServer().catch(() => {}), 3000);
+    }
+  };
+}
+
+function ghCfg(){ return {repo: store.get("scanner.repo") || "", branch: store.get("scanner.branch") || "live-status", token: store.get("scanner.token") || ""}; }
+
+async function pollGithub(){
+  const c = ghCfg();
+  if (!c.repo){ openDlg(); return; }
+  const headers = {"Accept": "application/vnd.github.raw+json"};
+  if (c.token) headers["Authorization"] = "Bearer " + c.token;
+  try {
+    const r = await fetch(`https://api.github.com/repos/${c.repo}/contents/live_status.json?ref=${encodeURIComponent(c.branch)}&_=${Date.now()}`, {headers, cache: "no-store"});
+    if (r.status === 404) throw new Error("No live data yet on branch '" + c.branch + "'. Run the scanner workflow with 'live dashboard' enabled.");
+    if (r.status === 401 || r.status === 403) throw new Error("GitHub refused (HTTP " + r.status + "): check the token, or you hit the rate limit (" + (r.headers.get("x-ratelimit-remaining") ?? "?") + " left).");
+    if (!r.ok) throw new Error("GitHub HTTP " + r.status);
+    apply(await r.json(), new Date().toISOString());
+    $("#banner").className = "banner" + (S.source_note || connState === "stale" ? " show" : "");
+  } catch (err) {
+    const b = $("#banner"); b.textContent = String(err.message || err); b.className = "banner show err";
+    $("#led").className = "led off"; $("#connText").textContent = "OFFLINE";
+  }
+  const every = ghCfg().token ? 10000 : 65000;                 // unauthenticated API allows only 60 requests/hour
+  clearTimeout(ghTimer); ghTimer = setTimeout(pollGithub, every);
+}
+function startGithub(){ mode = "github"; transport = "GitHub branch (" + (ghCfg().token ? "10s" : "65s") + " poll)"; pollGithub(); }
+
+/* ---------- settings dialog ---------- */
+const dlg = $("#dlg");
+function openDlg(){ const c = ghCfg(); $("#fRepo").value = c.repo; $("#fBranch").value = c.branch; $("#fToken").value = c.token; if (!dlg.open) dlg.showModal(); }
+$("#gear").onclick = openDlg;
+$("#fCancel").onclick = () => dlg.close();
+$("#form").onsubmit = () => {
+  store.set("scanner.repo", $("#fRepo").value.trim()); store.set("scanner.branch", $("#fBranch").value.trim() || "live-status");
+  store.set("scanner.token", $("#fToken").value.trim()); store.set("scanner.src", "github");
+  if (es){ es.close(); es = null; } clearInterval(pollTimer); pollTimer = null; startGithub();
+};
+
+/* ---------- misc ---------- */
+document.querySelectorAll(".keys button").forEach((b) => b.onclick = () => { tab = b.dataset.tab; if (S) renderTab(); });
+document.addEventListener("keydown", (e) => { if (e.target.tagName === "INPUT") return; if (e.key === "1") { tab = "log"; S && renderTab(); } if (e.key === "2") { tab = "config"; S && renderTab(); } });
+setInterval(() => {
+  $("#clock").textContent = fT.format(new Date(nowMs())) + " IST";
+  if (S){ setConn(); renderFoot(); }
+}, 1000);
+
+(async function boot(){
+  const forced = params.get("src") || (location.protocol === "file:" ? "github" : "");
+  if (forced !== "github"){
+    try { await tryServer(); mode = "server"; startSSE(); return; }
+    catch (err){
+      if (String(err.message).startsWith("ACCESS KEY")){ const b = $("#banner"); b.textContent = err.message; b.className = "banner show err"; return; }
+    }
+  }
+  startGithub();
+})();
+</script>
+</body>
+</html>
